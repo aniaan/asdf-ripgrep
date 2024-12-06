@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+set -e
+set -o pipefail
+
+source "$(dirname "$0")/../lib/utils.sh"
+
+fail() {
+	echo -e "\e[31mFail:\e[m $*"
+	exit 1
+}
+
+get_platform() {
+	case "$OSTYPE" in
+	darwin*) echo "apple-darwin" ;;
+	linux*) echo "unknown-linux-gnu" ;;
+	*) return 1 ;;
+	esac
+}
+
+get_architecture() {
+	case "$(uname -m)" in
+	x86_64 | x86-64 | x64 | amd64) echo "x86_64" ;;
+	aarch64 | arm64) echo "aarch64" ;;
+	*) return 1 ;;
+	esac
+}
+
+get_binary_filename() {
+	local platform="$1"
+	local architecture="$2"
+	local version="$3"
+
+	echo "ripgrep-${version}-${architecture}-${platform}.tar.gz"
+}
+
+verify_checksum() {
+	local checksum_file="$1"
+	local dir="$2"
+
+	# Validate parameters
+	[ -z "$checksum_file" ] && { echo "Error: checksum file not specified"; return 1; }
+	[ -z "$dir" ] && { echo "Error: directory not specified"; return 1; }
+
+	# Check if file and directory exist
+	[ ! -f "$dir/$checksum_file" ] && { echo "Error: checksum file not found: $checksum_file"; return 1; }
+
+	(cd "$dir" && {
+		if command -v sha256sum >/dev/null; then
+			sha256sum -c "$checksum_file" 2>/dev/null || {
+				echo "Checksum verification failed"
+				return 1
+			}
+		elif command -v shasum >/dev/null; then
+			shasum -a 256 -c "$checksum_file" 2>/dev/null || {
+				echo "Checksum verification failed"
+				return 1
+			}
+		else
+			echo "Neither sha256sum nor shasum command found"
+			return 1
+		fi
+	})
+
+	echo "Checksum verification passed"
+}
+
+download_and_verify() {
+	local url="$1"
+	local output_path="$2"
+
+	echo "* Downloading ${url}..."
+	curl --fail --silent --location --output "$output_path" "$url" || {
+		echo "Failed to download: ${url}"
+		return 1
+	}
+}
+
+install_ripgrep_binary() {
+	local download_url="$1"
+	local sha256_url="$2"
+	local binary_filename="$3"
+	local install_path="$4"
+	local tmp_dir="$5"
+
+	local source_path="${tmp_dir}/${binary_filename}"
+
+	download_and_verify "$download_url" "$source_path" || return 1
+	download_and_verify "$sha256_url" "${source_path}.sha256" || return 1
+
+	verify_checksum "${binary_filename}.sha256" "$tmp_dir" || return 1
+
+	echo "* Extracting archive..."
+	mkdir -p "$install_path"
+
+	# 首先解压到临时目录
+	tar -xzf "$source_path" -C "$tmp_dir" || return 1
+
+	# 获取解压后的目录名（去掉.tar.gz后缀）
+	local extracted_dir="${binary_filename%.tar.gz}"
+
+	# 移动文件到安装目录
+	mkdir -p "$install_path/bin"
+	mv "$tmp_dir/$extracted_dir/rg" "$install_path/bin/" || return 1
+	mv "$tmp_dir/$extracted_dir/complete" "$install_path/" || return 1
+	mv "$tmp_dir/$extracted_dir/doc" "$install_path/" || return 1
+
+	echo "* Setting permissions..."
+	chmod +x "$install_path/bin/rg" || return 1
+
+	return 0
+}
+
+install_ripgrep() {
+	local install_type="$1"
+	local version="$2"
+	local install_path="$3"
+
+	[ "$install_type" = "version" ] || fail "ripgrep install type '$install_type' is not supported"
+
+	local platform architecture
+	platform="$(get_platform)" || fail "Unsupported platform"
+	architecture="$(get_architecture)" || fail "Unsupported architecture"
+
+	local binary_filename download_url sha256_url
+	binary_filename="$(get_binary_filename "$platform" "$architecture" "$version")"
+	download_url=$(get_release_url "$version" "$binary_filename")
+	sha256_url="${download_url}.sha256"
+
+	local tmp_dir
+	tmp_dir="$(mktemp -d -t ripgrep_XXXXXX)"
+	trap 'rm -rf "$tmp_dir"' EXIT
+
+	echo "* Installing ripgrep ${version} for ${platform}/${architecture}"
+
+	install_ripgrep_binary "$download_url" "$sha256_url" "$binary_filename" "$install_path" "$tmp_dir" || fail "Installation failed"
+
+	echo "* Installation completed successfully!"
+}
+
+install_ripgrep "$ASDF_INSTALL_TYPE" "$ASDF_INSTALL_VERSION" "$ASDF_INSTALL_PATH"
