@@ -17,14 +17,16 @@ get_release_url() {
 
 
 list_all_versions() {
-    # 获取所有release标签
     local cmd="curl -s"
+    local response
 
-    versions=$($cmd "$(get_github_api_releases_url)" | \
-        grep -oE "tag_name\": *\"[^\"]*\"" | \
-        sed 's/tag_name\": *\"//;s/\"//' | \
+    response=$($cmd "$(get_github_api_releases_url)")
+    versions=$(echo "$response" | \
+        jq -r '.[].tag_name' | \
         grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | \
-        sort -t. -k 1,1nr -k 2,2nr -k 3,3nr)
+        sort -V | \
+        tr '\n' ' ' | \
+        sed 's/ $//')
 
     if [ -z "$versions" ]; then
         echo "Unable to fetch ripgrep versions from GitHub" >&2
