@@ -15,7 +15,7 @@ PLUGIN = Plugin(
     filename_template="ripgrep-{version}-{arch}-{platform}.tar.gz",
     platform_map={
         "darwin": "apple-darwin",
-        "linux": "unknown-linux-gnu",
+        "linux": "unknown-linux-musl",
     },
     bin_path=lambda kwargs: f"{kwargs['filename'].rstrip('.tar.gz')}/rg",
     checksum_filename_template="{filename}.sha256",
